@@ -1,0 +1,44 @@
+#!/bin/bash
+set -a
+source "$(dirname "$0")/../.env"
+set +a
+
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+RED='\033[0;31m'
+NC='\033[0m'
+
+echo "Qwopus 27B Status"
+echo "================================"
+
+STATE=$(aws ec2 describe-instances \
+  --instance-ids $AWS_INSTANCE_ID \
+  --region $AWS_REGION \
+  --query 'Reservations[0].Instances[0].State.Name' \
+  --output text 2>/dev/null)
+
+if [ "$STATE" == "running" ]; then
+  echo -e "Instance:  ${GREEN}running${NC}"
+else
+  echo -e "Instance:  ${RED}$STATE${NC}"
+  echo "================================"
+  exit 0
+fi
+
+HEALTH=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 3 \
+  http://$AWS_ELASTIC_IP:$VLLM_PORT/health 2>/dev/null)
+if [ "$HEALTH" == "200" ]; then
+  echo -e "Model:     ${GREEN}loaded${NC}"
+else
+  echo -e "Model:     ${RED}not responding${NC}"
+fi
+
+SEARX=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 3 \
+  http://$AWS_ELASTIC_IP:$SEARXNG_PORT 2>/dev/null)
+if [ "$SEARX" == "200" ]; then
+  echo -e "SearXNG:   ${GREEN}ready${NC}"
+else
+  echo -e "SearXNG:   ${RED}not responding${NC}"
+fi
+
+echo "================================"

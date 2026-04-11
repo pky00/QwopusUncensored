@@ -1,0 +1,104 @@
+#!/bin/bash
+set -a
+source "$(dirname "$0")/../.env"
+set +a
+
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+RED='\033[0;31m'
+NC='\033[0m'
+
+echo -e "${GREEN}Starting Qwopus 27B...${NC}"
+
+STATE=$(aws ec2 describe-instances \
+  --instance-ids $AWS_INSTANCE_ID \
+  --region $AWS_REGION \
+  --query 'Reservations[0].Instances[0].State.Name' \
+  --output text 2>/dev/null)
+
+if [ "$STATE" == "running" ]; then
+  echo -e "${GREEN}Instance already running${NC}"
+
+elif [ "$STATE" == "stopped" ]; then
+  echo -e "${YELLOW}Instance stopped. Starting...${NC}"
+  aws ec2 start-instances \
+    --instance-ids $AWS_INSTANCE_ID \
+    --region $AWS_REGION > /dev/null 2>&1
+
+  echo -n "  Waiting for instance"
+  while true; do
+    STATE=$(aws ec2 describe-instances \
+      --instance-ids $AWS_INSTANCE_ID \
+      --region $AWS_REGION \
+      --query 'Reservations[0].Instances[0].State.Name' \
+      --output text 2>/dev/null)
+    if [ "$STATE" == "running" ]; then
+      echo ""
+      echo -e "${GREEN}  Instance running${NC}"
+      break
+    fi
+    echo -n "."
+    sleep 3
+  done
+
+  echo -n "  Waiting for SSH"
+  for i in $(seq 1 40); do
+    if ssh -i $AWS_SSH_KEY -o ConnectTimeout=3 -o StrictHostKeyChecking=no \
+      ubuntu@$AWS_ELASTIC_IP "echo ok" > /dev/null 2>&1; then
+      echo ""
+      echo -e "${GREEN}  SSH ready${NC}"
+      break
+    fi
+    echo -n "."
+    sleep 3
+  done
+
+elif [ "$STATE" == "pending" ] || [ "$STATE" == "stopping" ]; then
+  echo -e "${YELLOW}Instance is ${STATE}. Waiting...${NC}"
+  aws ec2 wait instance-running \
+    --instance-ids $AWS_INSTANCE_ID \
+    --region $AWS_REGION
+  echo -e "${GREEN}Instance running${NC}"
+
+else
+  echo -e "${RED}Unexpected state: $STATE${NC}"
+  exit 1
+fi
+
+echo -n "  Waiting for model to load"
+for i in $(seq 1 60); do
+  HEALTH=$(curl -s -o /dev/null -w "%{http_code}" \
+    http://$AWS_ELASTIC_IP:$VLLM_PORT/health 2>/dev/null)
+  if [ "$HEALTH" == "200" ]; then
+    echo ""
+    echo -e "${GREEN}  Model loaded${NC}"
+    break
+  fi
+  if [ $i -eq 60 ]; then
+    echo ""
+    echo -e "${RED}  Model timeout. Check: ssh -i $AWS_SSH_KEY ubuntu@$AWS_ELASTIC_IP${NC}"
+    exit 1
+  fi
+  echo -n "."
+  sleep 3
+done
+
+SEARX=$(curl -s -o /dev/null -w "%{http_code}" \
+  http://$AWS_ELASTIC_IP:$SEARXNG_PORT 2>/dev/null)
+if [ "$SEARX" == "200" ]; then
+  echo -e "${GREEN}  SearXNG ready${NC}"
+else
+  echo -e "${YELLOW}  SearXNG not responding${NC}"
+fi
+
+echo ""
+echo -e "${GREEN}========================================${NC}"
+echo -e "${GREEN}  All systems go. Launching OpenCode.   ${NC}"
+echo -e "${GREEN}========================================${NC}"
+echo ""
+
+if [ -n "$1" ]; then
+  cd "$1"
+fi
+
+opencode
