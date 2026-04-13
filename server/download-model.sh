@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-MODEL_REPO="huihui-ai/Huihui-Qwen3.5-27B-Claude-4.6-Opus-abliterated"
+MODEL_REPO="groxaxo/Huihui-Qwen3.5-27B-Claude-4.6-Opus-abliterated-gptq-w4g128"
 MODEL_PATH="/home/ubuntu/models/qwopus-27b"
 
 mkdir -p $MODEL_PATH

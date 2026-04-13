@@ -6,6 +6,8 @@ Wants=docker.service
 [Service]
 Type=forking
 User=ubuntu
+EnvironmentFile=/etc/qwopus.env
+WorkingDirectory=/home/ubuntu/QwopusUncensored/server
 ExecStart=/home/ubuntu/QwopusUncensored/server/startup.sh
 RemainAfterExit=yes
 Restart=on-failure

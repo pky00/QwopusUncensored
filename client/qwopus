@@ -67,8 +67,8 @@ fi
 
 echo -n "  Waiting for model to load"
 for i in $(seq 1 60); do
-  HEALTH=$(curl -s -o /dev/null -w "%{http_code}" \
-    http://$AWS_ELASTIC_IP:$VLLM_PORT/health 2>/dev/null)
+  HEALTH=$(curl -sk -o /dev/null -w "%{http_code}" \
+    https://$QWOPUS_DOMAIN:$VLLM_PORT/health 2>/dev/null)
   if [ "$HEALTH" == "200" ]; then
     echo ""
     echo -e "${GREEN}  Model loaded${NC}"
@@ -83,8 +83,9 @@ for i in $(seq 1 60); do
   sleep 3
 done
 
-SEARX=$(curl -s -o /dev/null -w "%{http_code}" \
-  http://$AWS_ELASTIC_IP:$SEARXNG_PORT 2>/dev/null)
+SEARX=$(curl -sk -o /dev/null -w "%{http_code}" \
+  -H "Authorization: Bearer $QWOPUS_API_KEY" \
+  https://$QWOPUS_DOMAIN:$SEARXNG_PROXY_PORT/health 2>/dev/null)
 if [ "$SEARX" == "200" ]; then
   echo -e "${GREEN}  SearXNG ready${NC}"
 else

@@ -3,7 +3,8 @@
     "searxng": {
       "command": "mcp-searxng",
       "env": {
-        "SEARXNG_URL": "http://YOUR_ELASTIC_IP:8888"
+        "SEARXNG_URL": "https://qwopus.peteryamout.com:8889",
+        "SEARXNG_API_KEY": "LdiOHxeTFEK1hv-1eJkg0hscCbj0RuhDbWHzBoO0f5Q"
       }
     }
   }
