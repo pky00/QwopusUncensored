@@ -9,7 +9,7 @@ mkdir -p $MODEL_PATH
 echo "Downloading $MODEL_REPO..."
 echo "This will take 10-20 minutes depending on bandwidth."
 
-huggingface-cli download $MODEL_REPO \
+python3 -m huggingface_hub.commands.huggingface_cli download $MODEL_REPO \
   --local-dir $MODEL_PATH \
   --local-dir-use-symlinks False
 

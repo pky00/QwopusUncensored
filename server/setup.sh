@@ -23,11 +23,13 @@ echo "========================================="
 
 echo "[1/9] Installing Docker..."
 sudo apt-get update
-sudo apt-get install -y docker.io docker-compose
+if ! command -v docker &> /dev/null; then
+  sudo apt-get install -y docker.io docker-compose
+fi
 sudo usermod -aG docker ubuntu
 
 echo "[2/9] Installing vLLM + dependencies..."
-pip install vllm huggingface-hub httpx fastapi uvicorn --break-system-packages
+pip3 install vllm huggingface-hub httpx fastapi uvicorn --break-system-packages
 
 echo "[3/9] Installing Node.js..."
 curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -

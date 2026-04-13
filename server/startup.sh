@@ -18,7 +18,7 @@ export PYTHONPATH="/home/ubuntu/QwopusUncensored/server:$PYTHONPATH"
 CERT="/etc/letsencrypt/live/$QWOPUS_DOMAIN/fullchain.pem"
 KEY="/etc/letsencrypt/live/$QWOPUS_DOMAIN/privkey.pem"
 
-python -m vllm.entrypoints.openai.api_server \
+python3 -m vllm.entrypoints.openai.api_server \
   --model $MODEL_PATH \
   --quantization gptq_marlin \
   --max-model-len 16384 \
@@ -37,7 +37,7 @@ python -m vllm.entrypoints.openai.api_server \
 VLLM_PID=$!
 echo "$(date): vLLM started (PID: $VLLM_PID)"
 
-python /home/ubuntu/QwopusUncensored/server/searxng_proxy.py \
+python3 /home/ubuntu/QwopusUncensored/server/searxng_proxy.py \
   > /var/log/searxng-proxy.log 2>&1 &
 
 echo "$(date): SearXNG proxy started"
