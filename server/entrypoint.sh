@@ -11,12 +11,14 @@ echo "$(date): Starting Qwopus 27B setup..."
 echo "$(date): ========================================"
 
 echo "$(date): Waiting for network..."
-for i in $(seq 1 30); do
-  if ping -c 1 -W 2 pypi.org > /dev/null 2>&1; then
+for i in $(seq 1 60); do
+  if curl -s --connect-timeout 3 https://pypi.org > /dev/null 2>&1; then
     echo "$(date): Network ready."
     break
   fi
-  echo "$(date): No network yet, retrying ($i/30)..."
+  if [ $i -eq 60 ]; then
+    echo "$(date): WARNING: Network not available after 5 min. Continuing anyway..."
+  fi
   sleep 5
 done
 
