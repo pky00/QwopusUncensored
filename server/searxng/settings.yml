@@ -27,6 +27,3 @@ engines:
   - name: github
     engine: github
     shortcut: gh
-  - name: stackoverflow
-    engine: stackoverflow
-    shortcut: so
