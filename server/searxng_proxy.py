@@ -11,8 +11,8 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 API_KEY = os.environ["QWOPUS_API_KEY"]
-SEARXNG_URL = os.environ.get("SEARXNG_URL", "http://127.0.0.1:8888")
-PROXY_PORT = int(os.environ.get("SEARXNG_PROXY_PORT", "8889"))
+SEARXNG_URL = os.environ.get("SEARXNG_INTERNAL_URL", "http://127.0.0.1:8877")
+PROXY_PORT = int(os.environ.get("SEARXNG_PROXY_PORT", "8080"))
 
 app = FastAPI()
 client = httpx.AsyncClient(base_url=SEARXNG_URL, timeout=30.0)
