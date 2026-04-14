@@ -1,7 +1,7 @@
 {
   "provider": "openai-compatible",
   "model": "groxaxo/Huihui-Qwen3.5-27B-Claude-4.6-Opus-abliterated-gptq-w4g128",
-  "api_base": "https://YOUR_POD_ID-8000.proxy.runpod.net/v1",
+  "api_base": "https://51km9zmq8x208z-8000.proxy.runpod.net/v1",
   "api_key": "LdiOHxeTFEK1hv-1eJkg0hscCbj0RuhDbWHzBoO0f5Q",
   "context_window": 32768,
   "max_output_tokens": 8192
