@@ -168,8 +168,31 @@ echo -e "${GREEN}  SearXNG: $SEARXNG_URL${NC}"
 echo -e "${GREEN}========================================${NC}"
 echo ""
 
-if [ -n "$1" ]; then
-  cd "$1"
-fi
+# Update client configs with current pod URLs
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+cat > "$SCRIPT_DIR/opencode-config.json" <<EOF
+{
+  "provider": "openai-compatible",
+  "model": "/workspace/models/qwopus-27b",
+  "api_base": "$VLLM_URL",
+  "api_key": "$QWOPUS_API_KEY",
+  "context_window": 32768,
+  "max_output_tokens": 8192
+}
+EOF
 
-opencode
+cat > "$SCRIPT_DIR/mcp-config.json" <<EOF
+{
+  "mcpServers": {
+    "searxng": {
+      "command": "mcp-searxng",
+      "env": {
+        "SEARXNG_URL": "$SEARXNG_URL",
+        "SEARXNG_API_KEY": "$QWOPUS_API_KEY"
+      }
+    }
+  }
+}
+EOF
+
+echo -e "${GREEN}Client configs updated with current pod URLs.${NC}"
