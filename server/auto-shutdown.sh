@@ -22,8 +22,8 @@ if [ $DIFF -ge $IDLE_LIMIT ]; then
 
   curl -s -X POST "https://api.runpod.io/graphql?api_key=$RUNPOD_API_KEY" \
     -H "Content-Type: application/json" \
-    -d "{\"query\": \"mutation { podStop(input: { podId: \\\"$RUNPOD_POD_ID\\\" }) { id } }\"}" \
+    -d "{\"query\": \"mutation { podTerminate(input: { podId: \\\"$RUNPOD_POD_ID\\\" }) }\"}" \
     > /dev/null 2>&1
 
-  echo "$(date): Pod stop request sent."
+  echo "$(date): Pod terminate request sent."
 fi

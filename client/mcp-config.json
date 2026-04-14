@@ -3,8 +3,8 @@
     "searxng": {
       "command": "mcp-searxng",
       "env": {
-        "SEARXNG_URL": "https://51km9zmq8x208z-8080.proxy.runpod.net",
-        "SEARXNG_API_KEY": "LdiOHxeTFEK1hv-1eJkg0hscCbj0RuhDbWHzBoO0f5Q"
+        "SEARXNG_URL": "UPDATE_WITH_POD_URL",
+        "SEARXNG_API_KEY": "UPDATE_WITH_API_KEY"
       }
     }
   }

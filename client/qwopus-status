@@ -11,32 +11,40 @@ NC='\033[0m'
 echo "Qwopus 27B Status"
 echo "================================"
 
-STATUS=$(curl -s "https://api.runpod.io/graphql?api_key=$RUNPOD_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d "{\"query\": \"{ pod(input: { podId: \\\"$RUNPOD_POD_ID\\\" }) { desiredStatus runtime { uptimeInSeconds gpus { gpuUtilPerc memoryUtilPerc } } } }\"}" \
-  2>/dev/null | python3 -c "
-import sys, json
-d = json.load(sys.stdin)['data']['pod']
-print(d['desiredStatus'])
-if d.get('runtime') and d['runtime'].get('gpus'):
-    g = d['runtime']['gpus'][0]
-    print(f\"GPU: {g.get('gpuUtilPerc', '?')}% util, {g.get('memoryUtilPerc', '?')}% VRAM\")
-    uptime = d['runtime'].get('uptimeInSeconds', 0)
-    print(f\"Uptime: {uptime // 3600}h {(uptime % 3600) // 60}m\")
-" 2>/dev/null)
-
-POD_STATUS=$(echo "$STATUS" | head -1)
-
-if [ "$POD_STATUS" == "RUNNING" ]; then
-  echo -e "Pod:       ${GREEN}running${NC}"
-  echo "$STATUS" | tail -n +2 | while read line; do
-    echo -e "           ${GREEN}$line${NC}"
-  done
-else
-  echo -e "Pod:       ${RED}$POD_STATUS${NC}"
+if [ -z "$RUNPOD_POD_ID" ]; then
+  echo -e "Pod:       ${RED}no pod ID in .env${NC}"
   echo "================================"
   exit 0
 fi
+
+POD_INFO=$(curl -s "https://api.runpod.io/graphql?api_key=$RUNPOD_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d "{\"query\": \"{ pod(input: { podId: \\\"$RUNPOD_POD_ID\\\" }) { desiredStatus runtime { uptimeInSeconds gpus { gpuUtilPerc memoryUtilPerc } } } }\"}" \
+  2>/dev/null)
+
+STATUS=$(echo "$POD_INFO" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data']['pod']['desiredStatus'])" 2>/dev/null)
+
+if [ "$STATUS" == "RUNNING" ]; then
+  echo -e "Pod:       ${GREEN}running ($RUNPOD_POD_ID)${NC}"
+
+  echo "$POD_INFO" | python3 -c "
+import sys, json
+d = json.load(sys.stdin)['data']['pod']
+if d.get('runtime') and d['runtime'].get('gpus'):
+    g = d['runtime']['gpus'][0]
+    print(f\"GPU:       {g.get('gpuUtilPerc', '?')}% util, {g.get('memoryUtilPerc', '?')}% VRAM\")
+if d.get('runtime') and d['runtime'].get('uptimeInSeconds'):
+    u = d['runtime']['uptimeInSeconds']
+    print(f\"Uptime:    {u // 3600}h {(u % 3600) // 60}m\")
+" 2>/dev/null
+else
+  echo -e "Pod:       ${RED}$STATUS${NC}"
+  echo "================================"
+  exit 0
+fi
+
+VLLM_URL="https://${RUNPOD_POD_ID}-8000.proxy.runpod.net"
+SEARXNG_URL="https://${RUNPOD_POD_ID}-8080.proxy.runpod.net"
 
 HEALTH=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 5 \
   "$VLLM_URL/health" 2>/dev/null)
@@ -48,7 +56,7 @@ fi
 
 SEARX=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 5 \
   -H "Authorization: Bearer $QWOPUS_API_KEY" \
-  "$SEARXNG_URL/health" 2>/dev/null)
+  "$SEARXNG_URL/search?q=test&format=json" 2>/dev/null)
 if [ "$SEARX" == "200" ]; then
   echo -e "SearXNG:   ${GREEN}ready${NC}"
 else

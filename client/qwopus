@@ -6,46 +6,133 @@ set +a
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 RED='\033[0;31m'
+CYAN='\033[0;36m'
 NC='\033[0m'
 
-echo -e "${GREEN}Starting Qwopus 27B...${NC}"
+TEMPLATE_ID="${RUNPOD_TEMPLATE_ID:-xejddhhm4u}"
+VOLUME_ID="${RUNPOD_VOLUME_ID:-zh2qr905e2}"
+MIN_VRAM=40
 
-STATUS=$(curl -s "https://api.runpod.io/graphql?api_key=$RUNPOD_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d "{\"query\": \"{ pod(input: { podId: \\\"$RUNPOD_POD_ID\\\" }) { desiredStatus runtime { uptimeInSeconds } } }\"}" \
-  2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data']['pod']['desiredStatus'])" 2>/dev/null)
+echo -e "${GREEN}Qwopus 27B${NC}"
+echo ""
 
-if [ "$STATUS" == "RUNNING" ]; then
-  echo -e "${GREEN}Pod already running${NC}"
-
-elif [ "$STATUS" == "EXITED" ]; then
-  echo -e "${YELLOW}Pod stopped. Starting...${NC}"
-  curl -s -X POST "https://api.runpod.io/graphql?api_key=$RUNPOD_API_KEY" \
+# Check if we have an existing running pod
+if [ -n "$RUNPOD_POD_ID" ]; then
+  STATUS=$(curl -s "https://api.runpod.io/graphql?api_key=$RUNPOD_API_KEY" \
     -H "Content-Type: application/json" \
-    -d "{\"query\": \"mutation { podResume(input: { podId: \\\"$RUNPOD_POD_ID\\\", gpuCount: 1 }) { id desiredStatus } }\"}" \
-    > /dev/null 2>&1
+    -d "{\"query\": \"{ pod(input: { podId: \\\"$RUNPOD_POD_ID\\\" }) { desiredStatus } }\"}" \
+    2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data']['pod']['desiredStatus'])" 2>/dev/null)
 
-  echo -n "  Waiting for pod"
-  for i in $(seq 1 60); do
-    STATUS=$(curl -s "https://api.runpod.io/graphql?api_key=$RUNPOD_API_KEY" \
-      -H "Content-Type: application/json" \
-      -d "{\"query\": \"{ pod(input: { podId: \\\"$RUNPOD_POD_ID\\\" }) { desiredStatus } }\"}" \
-      2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data']['pod']['desiredStatus'])" 2>/dev/null)
-    if [ "$STATUS" == "RUNNING" ]; then
-      echo ""
-      echo -e "${GREEN}  Pod running${NC}"
-      break
-    fi
-    echo -n "."
-    sleep 3
-  done
-else
-  echo -e "${RED}Unexpected pod status: $STATUS${NC}"
-  exit 1
+  if [ "$STATUS" == "RUNNING" ]; then
+    echo -e "${GREEN}Pod $RUNPOD_POD_ID already running${NC}"
+    POD_ID="$RUNPOD_POD_ID"
+  fi
 fi
 
-echo -n "  Waiting for model to load"
-for i in $(seq 1 120); do
+# Create new pod if none running
+if [ -z "$POD_ID" ]; then
+
+  # Query available GPUs with >= MIN_VRAM
+  echo -e "${YELLOW}Fetching available GPUs (>=${MIN_VRAM} GB VRAM)...${NC}"
+  echo ""
+
+  GPU_DATA=$(curl -s "https://api.runpod.io/graphql?api_key=$RUNPOD_API_KEY" \
+    -H "Content-Type: application/json" \
+    -d "{\"query\": \"{ gpuTypes { id displayName memoryInGb secureCloud communityCloud communityPrice securePrice lowestPrice { minimumBidPrice uninterruptablePrice } } }\"}" \
+    2>/dev/null)
+
+  # Display available GPUs and let user choose
+  SELECTION=$(echo "$GPU_DATA" | python3 -c "
+import sys, json
+
+data = json.load(sys.stdin)
+gpus = data['data']['gpuTypes']
+
+available = []
+for g in gpus:
+    if g['memoryInGb'] >= $MIN_VRAM:
+        secure = g.get('securePrice')
+        if not secure:
+            continue
+        available.append({
+            'id': g['id'],
+            'name': g['displayName'],
+            'vram': g['memoryInGb'],
+            'secure': secure,
+        })
+
+available.sort(key=lambda x: (x['secure'], x['name']))
+
+if not available:
+    print('NONE')
+    sys.exit(0)
+
+print(f\"{'#':<4} {'GPU':<25} {'VRAM':<8} {'Price':<14}\")
+print('-' * 55)
+for i, g in enumerate(available, 1):
+    print(f\"{i:<4} {g['name']:<25} {g['vram']:<8} \${g['secure']:.2f}/hr\")
+
+print()
+print('IDS:' + '|'.join([f\"{i}:{g['id']}\" for i, g in enumerate(available, 1)]))
+" 2>/dev/null)
+
+  if [ "$SELECTION" == "NONE" ]; then
+    echo -e "${RED}No GPUs with >=${MIN_VRAM} GB VRAM available.${NC}"
+    exit 1
+  fi
+
+  # Print the table (everything except the IDS line)
+  echo "$SELECTION" | grep -v "^IDS:"
+
+  # Get the ID mapping
+  ID_MAP=$(echo "$SELECTION" | grep "^IDS:" | sed 's/^IDS://')
+
+  echo -ne "${CYAN}Choose GPU number (or press Enter for #1): ${NC}"
+  read -r CHOICE
+
+  if [ -z "$CHOICE" ]; then
+    CHOICE=1
+  fi
+
+  GPU_ID=$(echo "$ID_MAP" | tr '|' '\n' | grep "^${CHOICE}:" | cut -d: -f2)
+
+  if [ -z "$GPU_ID" ]; then
+    echo -e "${RED}Invalid choice.${NC}"
+    exit 1
+  fi
+
+  echo ""
+  echo -e "${YELLOW}Creating pod with $GPU_ID...${NC}"
+
+  RESULT=$(curl -s "https://api.runpod.io/graphql?api_key=$RUNPOD_API_KEY" \
+    -H "Content-Type: application/json" \
+    -d "{\"query\": \"mutation { podFindAndDeployOnDemand(input: { templateId: \\\"$TEMPLATE_ID\\\", gpuTypeId: \\\"$GPU_ID\\\", gpuCount: 1, networkVolumeId: \\\"$VOLUME_ID\\\", cloudType: SECURE, name: \\\"qwopus-27b\\\" }) { id } }\"}" \
+    2>/dev/null)
+
+  POD_ID=$(echo "$RESULT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data']['podFindAndDeployOnDemand']['id'])" 2>/dev/null)
+
+  if [ -z "$POD_ID" ] || [ "$POD_ID" == "None" ]; then
+    echo -e "${RED}Failed to create pod. Response:${NC}"
+    echo "$RESULT"
+    exit 1
+  fi
+
+  echo -e "${GREEN}Pod created: $POD_ID${NC}"
+
+  # Save pod ID
+  ENV_FILE="$(dirname "$0")/../.env"
+  if grep -q "RUNPOD_POD_ID" "$ENV_FILE" 2>/dev/null; then
+    sed -i "s/RUNPOD_POD_ID=.*/RUNPOD_POD_ID=$POD_ID/" "$ENV_FILE"
+  else
+    echo "RUNPOD_POD_ID=$POD_ID" >> "$ENV_FILE"
+  fi
+fi
+
+VLLM_URL="https://${POD_ID}-8000.proxy.runpod.net"
+SEARXNG_URL="https://${POD_ID}-8080.proxy.runpod.net"
+
+echo -n "  Waiting for model to load (this takes ~10-15 min)"
+for i in $(seq 1 240); do
   HEALTH=$(curl -s -o /dev/null -w "%{http_code}" \
     "$VLLM_URL/health" 2>/dev/null)
   if [ "$HEALTH" == "200" ]; then
@@ -53,9 +140,10 @@ for i in $(seq 1 120); do
     echo -e "${GREEN}  Model loaded${NC}"
     break
   fi
-  if [ $i -eq 120 ]; then
+  if [ $i -eq 240 ]; then
     echo ""
     echo -e "${RED}  Model timeout. Check RunPod console logs.${NC}"
+    echo -e "${RED}  Pod ID: $POD_ID${NC}"
     exit 1
   fi
   echo -n "."
@@ -64,16 +152,19 @@ done
 
 SEARX=$(curl -s -o /dev/null -w "%{http_code}" \
   -H "Authorization: Bearer $QWOPUS_API_KEY" \
-  "$SEARXNG_URL/health" 2>/dev/null)
+  "$SEARXNG_URL/search?q=test&format=json" 2>/dev/null)
 if [ "$SEARX" == "200" ]; then
   echo -e "${GREEN}  SearXNG ready${NC}"
 else
-  echo -e "${YELLOW}  SearXNG not responding${NC}"
+  echo -e "${YELLOW}  SearXNG not responding (may still be starting)${NC}"
 fi
 
 echo ""
 echo -e "${GREEN}========================================${NC}"
-echo -e "${GREEN}  All systems go. Launching OpenCode.   ${NC}"
+echo -e "${GREEN}  All systems go!                       ${NC}"
+echo -e "${GREEN}  Pod ID:  $POD_ID${NC}"
+echo -e "${GREEN}  vLLM:    $VLLM_URL/v1${NC}"
+echo -e "${GREEN}  SearXNG: $SEARXNG_URL${NC}"
 echo -e "${GREEN}========================================${NC}"
 echo ""
 

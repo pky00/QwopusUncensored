@@ -8,41 +8,30 @@ YELLOW='\033[1;33m'
 RED='\033[0;31m'
 NC='\033[0m'
 
+if [ -z "$RUNPOD_POD_ID" ]; then
+  echo -e "${RED}No pod ID found in .env${NC}"
+  exit 1
+fi
+
 STATUS=$(curl -s "https://api.runpod.io/graphql?api_key=$RUNPOD_API_KEY" \
   -H "Content-Type: application/json" \
   -d "{\"query\": \"{ pod(input: { podId: \\\"$RUNPOD_POD_ID\\\" }) { desiredStatus } }\"}" \
   2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data']['pod']['desiredStatus'])" 2>/dev/null)
 
-if [ "$STATUS" == "EXITED" ]; then
-  echo -e "${YELLOW}Already stopped.${NC}"
+if [ "$STATUS" != "RUNNING" ]; then
+  echo -e "${YELLOW}Pod is not running (status: $STATUS)${NC}"
   exit 0
 fi
 
-if [ "$STATUS" != "RUNNING" ]; then
-  echo -e "${RED}Pod status: $STATUS${NC}"
-  exit 1
-fi
-
-echo -e "${YELLOW}Stopping Qwopus...${NC}"
-curl -s -X POST "https://api.runpod.io/graphql?api_key=$RUNPOD_API_KEY" \
+echo -e "${YELLOW}Terminating pod $RUNPOD_POD_ID...${NC}"
+curl -s "https://api.runpod.io/graphql?api_key=$RUNPOD_API_KEY" \
   -H "Content-Type: application/json" \
-  -d "{\"query\": \"mutation { podStop(input: { podId: \\\"$RUNPOD_POD_ID\\\" }) { id } }\"}" \
+  -d "{\"query\": \"mutation { podTerminate(input: { podId: \\\"$RUNPOD_POD_ID\\\" }) }\"}" \
   > /dev/null 2>&1
 
-echo -n "  Waiting"
-for i in $(seq 1 30); do
-  STATUS=$(curl -s "https://api.runpod.io/graphql?api_key=$RUNPOD_API_KEY" \
-    -H "Content-Type: application/json" \
-    -d "{\"query\": \"{ pod(input: { podId: \\\"$RUNPOD_POD_ID\\\" }) { desiredStatus } }\"}" \
-    2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data']['pod']['desiredStatus'])" 2>/dev/null)
-  if [ "$STATUS" == "EXITED" ]; then
-    echo ""
-    echo -e "${GREEN}Stopped. Billing paused.${NC}"
-    exit 0
-  fi
-  echo -n "."
-  sleep 3
-done
+echo -e "${GREEN}Pod terminated. Billing stopped.${NC}"
+echo -e "${GREEN}Network volume preserved. Run ./client/qwopus to start a new pod.${NC}"
 
-echo ""
-echo -e "${YELLOW}Stop requested. Check RunPod console.${NC}"
+# Clear pod ID since it's terminated
+ENV_FILE="$(dirname "$0")/../.env"
+sed -i "s/RUNPOD_POD_ID=.*/RUNPOD_POD_ID=/" "$ENV_FILE"
