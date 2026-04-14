@@ -50,4 +50,5 @@ python3 -m vllm.entrypoints.openai.api_server \
   --enable-auto-tool-choice \
   --tool-call-parser hermes \
   --api-key "$QWOPUS_API_KEY" \
-  --middleware rate_limiter.RateLimiterMiddleware
+  --middleware rate_limiter.RateLimiterMiddleware \
+  2>&1 | tee -a /workspace/logs/vllm.log
