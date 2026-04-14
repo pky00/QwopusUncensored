@@ -24,15 +24,17 @@ pip3 install httpx fastapi uvicorn --break-system-packages -q 2>&1 | tail -3
 
 # ---- Step 2: Install SearXNG from git ----
 echo "$(date): [2/4] Installing SearXNG..."
-apt-get update -qq && apt-get install -y -qq libxslt1-dev zlib1g-dev libffi-dev libssl-dev > /dev/null 2>&1
+apt-get update -qq && apt-get install -y -qq libxslt1-dev zlib1g-dev libffi-dev libssl-dev python3-dev build-essential 2>&1 | tail -5
 
 if [ ! -d "$SEARXNG_DIR" ]; then
-  git clone https://github.com/searxng/searxng.git "$SEARXNG_DIR" -q
+  echo "$(date): Cloning SearXNG repo..."
+  git clone https://github.com/searxng/searxng.git "$SEARXNG_DIR"
 fi
 
 cd "$SEARXNG_DIR"
-git pull -q 2>/dev/null
-pip3 install --break-system-packages -q -e . 2>&1 | tail -3
+git pull 2>/dev/null
+echo "$(date): Installing SearXNG Python package..."
+pip3 install --break-system-packages --use-pep517 --no-build-isolation -e . 2>&1 | tail -10
 
 mkdir -p /etc/searxng
 cp "$SCRIPT_DIR/searxng/settings.yml" /etc/searxng/settings.yml
