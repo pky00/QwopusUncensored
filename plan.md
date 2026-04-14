@@ -1,41 +1,30 @@
 # Qwopus 27B — Self-Hosted AI Stack
 
-A private, uncensored, Claude Opus 4.6-distilled 27B model on AWS with coding agent, web search, and auto-shutdown.
+A private, uncensored, Claude Opus 4.6-distilled 27B model on RunPod with coding agent, web search, and auto-shutdown.
 
-> **Status (2026-04-13)**: AWS Spot quota approved (8 vCPUs, `eu-west-1`). Model downloaded locally. Implementation in progress: HTTPS + API key security, rate limiting, CloudWatch monitoring, SearXNG proxy. Next step: finish implementation, then deploy.
+> **Status (2026-04-13)**: Pivoted from AWS to RunPod. AWS had two blockers: no g6 instances in eu-west-1, and A10G (22 GB) couldn't fit the multimodal model + KV cache. RunPod A6000/A40 (48 GB) solves both. Implementation pending.
 
 ## Current progress
 
 **Done:**
-- Repo scaffolded: server scripts, client scripts, systemd unit, auto-shutdown, SearXNG config
-- Server pinned to GPTQ quant (`gptq_marlin`) and `groxaxo/Huihui-Qwen3.5-27B-Claude-4.6-Opus-abliterated-gptq-w4g128`
-- Model downloaded locally to `C:\Projects\QwopusUncensoredAgent\QwopusUncensored-model` (~17.8 GB GPTQ shards + ~17 GB `.bak` variant files)
-- AWS console setup partially done: SSH key pair created, security group created, Elastic IP allocated (Phases 2-4)
-- AWS Spot quota approved: 8 vCPUs for G and VT instances in `eu-west-1`
-- Qwen3.5 architecture verified: vLLM has day-0 support (released Feb 16, 2026)
+- Repo scaffolded: server scripts, client scripts, rate limiter, SearXNG proxy
+- Model repo: `groxaxo/Huihui-Qwen3.5-27B-Claude-4.6-Opus-abliterated-gptq-w4g128` (GPTQ 4-bit, ~15 GB)
+- Model downloaded locally to `C:\Projects\QwopusUncensoredAgent\QwopusUncensored-model`
+- Qwen3.5 architecture verified: vLLM 0.19.0 has day-0 support
+- Domain: `qwopus.peteryamout.com` A record exists (needs updating to RunPod proxy or removal)
+- Security: vLLM `--api-key` + `--ssl-*` + rate limiter middleware all written and tested concepts
+- AWS fully cleaned up: Spot instance terminated, EIP released, no ongoing charges
 
 **In progress:**
-- Security layer: HTTPS (Let's Encrypt via certbot) + vLLM `--api-key` + rate limiting middleware
-- SearXNG proxy behind the same HTTPS + API key
-- CloudWatch integration for all logging and monitoring
-- Client scripts updated for HTTPS endpoints
+- Rework scripts for RunPod (entrypoint, auto-shutdown, client start/stop)
+- SearXNG pip install instead of Docker
+- Switch client configs to RunPod proxy URLs
 
-**Pending (manual, in AWS console):**
-- IAM role with `CloudWatchAgentServerPolicy` for the EC2 instance
-- DNS: A record `qwopus.peteryamout.com` → Elastic IP (on Namecheap)
-- AMI lookup for `eu-west-1`
-- Launch Spot instance (persistent, interruption behavior = Stop)
-
-### Model variants (`.bak` files)
-
-The downloaded repo ships two parallel sets of files. These are NOT corruption — they're two views of the same weights:
-
-| Variant | Architecture | Notes |
-|---|---|---|
-| Main (`config.json`, `model-*.safetensors`) | `Qwen3_5ForConditionalGeneration` | Multimodal wrapper. Produced by Unsloth. |
-| Backup (`*.bak`) | `Qwen3_5ForCausalLM` | Text-only causal LM. |
-
-Shards differ by ~6 KB each (metadata headers only). Do not delete `.bak` files until the server has loaded the model successfully.
+**Pending (manual):**
+- Create RunPod account + add funds
+- Create a network volume (~20 GB)
+- Create the GPU pod template
+- First deploy
 
 ## Environment
 
@@ -43,38 +32,33 @@ Shards differ by ~6 KB each (metadata headers only). Do not delete `.bak` files 
 - **Project path (Windows)**: `c:\Projects\QwopusUncensored`
 - **Project path (WSL)**: `/mnt/c/Projects/QwopusUncensored`
 - **GitHub repo**: https://github.com/pky00/QwopusUncensored (public)
-- **AWS region**: `eu-west-1` (Ireland)
+- **GPU provider**: RunPod (A6000 or A40, 48 GB VRAM)
 - **Domain**: `qwopus.peteryamout.com` (Namecheap DNS)
-- **Why `/mnt/c`**: user wants to stay on Windows filesystem. SSH key lives on Linux side (`~/.ssh/`) for `chmod 600`.
 
 ## Architecture
 
 ```
-Windows laptop / WSL2                 AWS eu-west-1, g6.2xlarge Spot (L4 24 GB)
-┌──────────────────────┐              ┌──────────────────────────────┐
-│  OpenCode (agent)    │──HTTPS+key──▶│  certbot (Let's Encrypt)     │
-│  ├── local files     │   prompt     │  vLLM (model serving)        │
-│  ├── terminal/bash   │◀─HTTPS+key──│  ├── Qwopus 27B (GPTQ)       │
-│  ├── git             │   response   │  ├── --api-key (auth)        │
-│  └── MCP: SearXNG ───│──HTTPS+key──▶│  └── --ssl-* (TLS)           │
-│                      │   search     │                              │
-│  qwopus CLI          │              │  SearXNG proxy (FastAPI)     │
-│  └── start/stop AWS  │              │  └── same HTTPS + API key    │
-│                      │              │                              │
-│                      │              │  Rate limiting middleware    │
-│                      │              │  ├── 50 req/min per IP       │
-│                      │              │  └── auto-ban after 3 fails  │
-│                      │              │                              │
-│                      │              │  CloudWatch agent            │
-│                      │              │  ├── vLLM logs               │
-│                      │              │  ├── GPU/CPU/RAM metrics     │
-│                      │              │  └── rate limit alerts       │
-│                      │              │                              │
-│                      │              │  Auto-shutdown (30m idle)    │
-└──────────────────────┘              └──────────────────────────────┘
-      HTTPS to qwopus.peteryamout.com:8000 (vLLM)
-      HTTPS to qwopus.peteryamout.com:8888 (SearXNG proxy)
-      Both protected by API key. No VPN/tunnel needed.
+Windows laptop / WSL2                    RunPod (A6000/A40 48 GB VRAM)
+┌──────────────────────┐                 ┌──────────────────────────────┐
+│  OpenCode (agent)    │───HTTPS────────▶│  vLLM (model serving)        │
+│  ├── local files     │   via RunPod    │  ├── Qwopus 27B (GPTQ)       │
+│  ├── terminal/bash   │◀──proxy URL─────│  ├── --api-key (auth)        │
+│  ├── git             │                 │  └── --ssl-* (TLS via proxy)  │
+│  └── MCP: SearXNG ───│───HTTPS────────▶│                              │
+│                      │                 │  SearXNG (pip, localhost)     │
+│  qwopus CLI          │                 │  SearXNG proxy (FastAPI)     │
+│  └── start/stop pod  │                 │  └── same API key auth       │
+│      via RunPod API  │                 │                              │
+│                      │                 │  Rate limiting middleware    │
+│                      │                 │  ├── 50 req/min per IP       │
+│                      │                 │  └── auto-ban after 3 fails  │
+│                      │                 │                              │
+│                      │                 │  Auto-shutdown (30m idle)    │
+│                      │                 │  └── calls RunPod API stop   │
+└──────────────────────┘                 └──────────────────────────────┘
+  Endpoints (stable across restarts):
+    vLLM:    https://{pod-id}-8000.proxy.runpod.net
+    SearXNG: https://{pod-id}-8889.proxy.runpod.net
 ```
 
 ## Repository layout
@@ -87,18 +71,17 @@ QwopusUncensored/
 ├── plan.md                   # this file
 ├── README.md
 ├── server/
-│   ├── setup.sh              # one-time install (docker, certbot, vllm, model, cloudwatch, systemd)
-│   ├── startup.sh            # launched by systemd on every boot
-│   ├── download-model.sh     # HF model pull
-│   ├── auto-shutdown.sh      # 30-min idle shutdown (cron */5)
+│   ├── entrypoint.sh         # pod startup: launches all services
+│   ├── download-model.sh     # HF model pull (first run only, saves to network volume)
+│   ├── install-searxng.sh    # one-time SearXNG pip install
+│   ├── auto-shutdown.sh      # 30-min idle shutdown via RunPod API
 │   ├── request-tracker.sh    # tails vllm.log, touches activity file
-│   ├── rate-limiter.py       # FastAPI middleware: per-IP rate limiting + auto-ban
-│   ├── searxng-proxy.py      # HTTPS + API key proxy in front of SearXNG
-│   ├── qwopus.service        # systemd unit
+│   ├── rate_limiter.py       # vLLM middleware: per-IP rate limiting + auto-ban
+│   ├── searxng_proxy.py      # API key proxy in front of SearXNG
 │   └── searxng/settings.yml
 └── client/                   # runs on laptop (WSL)
-    ├── qwopus                # start instance + wait for health + launch opencode
-    ├── qwopus-stop           # stop instance
+    ├── qwopus                # start pod + wait for health + launch opencode
+    ├── qwopus-stop           # stop pod
     ├── qwopus-status         # quick health check
     ├── opencode-config.json
     └── mcp-config.json
@@ -106,163 +89,113 @@ QwopusUncensored/
 
 ## Configuration (`.env`)
 
-Copy `.env.example` to `.env` and fill in after AWS resources are created:
-
 ```bash
-AWS_INSTANCE_ID=i-...
-AWS_REGION=eu-west-1
-AWS_ELASTIC_IP=...
-AWS_SSH_KEY=/home/pky00/.ssh/qwopus-key.pem
-AWS_SECURITY_GROUP_ID=sg-...
-AWS_SUBNET_ID=subnet-...
-AWS_KEY_PAIR_NAME=qwopus-key
-QWOPUS_API_KEY=<generated-secret>
-QWOPUS_DOMAIN=qwopus.peteryamout.com
-VLLM_PORT=8000
-SEARXNG_PORT=8888
-SEARXNG_PROXY_PORT=8889
+# RunPod
+RUNPOD_API_KEY=...
+RUNPOD_POD_ID=...
+
+# Security
+QWOPUS_API_KEY=LdiOHxeTFEK1hv-1eJkg0hscCbj0RuhDbWHzBoO0f5Q
+
+# Endpoints (filled in after pod creation)
+VLLM_URL=https://{pod-id}-8000.proxy.runpod.net
+SEARXNG_URL=https://{pod-id}-8889.proxy.runpod.net
+
+# Model
 MODEL_REPO=groxaxo/Huihui-Qwen3.5-27B-Claude-4.6-Opus-abliterated-gptq-w4g128
-MODEL_PATH=/home/ubuntu/models/qwopus-27b
-MAX_MODEL_LEN=16384
+MODEL_PATH=/workspace/models/qwopus-27b
+MAX_MODEL_LEN=32768
 GPU_MEMORY_UTILIZATION=0.90
 ```
 
 ## Security model
 
-1. **HTTPS (Let's Encrypt)** — certbot generates a trusted TLS cert for `qwopus.peteryamout.com`. vLLM serves HTTPS directly via `--ssl-keyfile` / `--ssl-certfile`. Auto-renews via cron every 60 days.
-2. **API key** — vLLM's built-in `--api-key` flag. Every request must include `Authorization: Bearer <key>`. No extra proxy needed for vLLM.
-3. **Rate limiting** — Python middleware (`rate-limiter.py`) injected into vLLM: 50 requests/minute per IP, auto-ban IP for 1 hour after 3 failed auth attempts.
-4. **SearXNG proxy** — SearXNG itself has no auth. A small FastAPI proxy (`searxng-proxy.py`) sits in front, validates the same API key, and forwards to SearXNG on localhost.
-5. **Security group** — SSH (22) from My IP for bootstrap. Port 8000 (vLLM HTTPS) and 8889 (SearXNG proxy HTTPS) open to `0.0.0.0/0` — protected by API key + TLS. SearXNG port 8888 bound to localhost only.
-
-## Monitoring (CloudWatch)
-
-CloudWatch agent installed by `setup.sh`. Sends:
-- **vLLM logs** (`/tmp/vllm.log`) → log group `/qwopus/vllm`
-- **Auto-shutdown logs** (`/var/log/auto-shutdown.log`) → log group `/qwopus/auto-shutdown`
-- **Startup logs** (`/var/log/qwopus-startup.log`) → log group `/qwopus/startup`
-- **Rate limiter logs** → log group `/qwopus/rate-limiter`
-- **System metrics** (CPU, RAM, disk) → custom namespace `Qwopus`
-- **GPU metrics** (utilization, VRAM, temperature via `nvidia-smi`) → custom namespace `Qwopus`
+1. **HTTPS** — RunPod's built-in proxy terminates TLS automatically. All `*.proxy.runpod.net` URLs are HTTPS. No certbot needed.
+2. **API key** — vLLM's built-in `--api-key` flag. Every request must include `Authorization: Bearer <key>`.
+3. **Rate limiting** — Python middleware (`rate_limiter.py`): 50 requests/minute per IP, auto-ban IP for 1 hour after 3 failed auth attempts.
+4. **SearXNG proxy** — FastAPI proxy (`searxng_proxy.py`) validates the same API key and forwards to SearXNG on localhost.
+5. **RunPod proxy** — only exposed ports are routed through the proxy. vLLM on 8000 and SearXNG proxy on 8889 are exposed. SearXNG itself (8888) is localhost only.
 
 ## Deployment flow
 
-### Phase 1 — Spot quota ✅
+### Phase 1 — RunPod account
 
-AWS console → Service Quotas → EC2 → `All G and VT Spot Instance Requests` → 8 vCPUs in `eu-west-1`. **Approved.**
+1. Sign up at runpod.io
+2. Add payment method + deposit funds (~$25 to start)
+3. Go to Settings → API Keys → generate one → save as `RUNPOD_API_KEY` in `.env`
 
-### Phase 2 — SSH key pair ✅
+### Phase 2 — Network volume
 
-AWS console → EC2 → Key Pairs → `qwopus-key` (RSA, .pem). **Done.**
+RunPod console → Storage → Create Network Volume:
+- Name: `qwopus-data`
+- Region: pick one with A6000/A40 availability (e.g. US-TX-3, EU-RO-1)
+- Size: **20 GB** (model is ~15 GB without .bak files)
+- Mount path: `/workspace` (default)
 
-### Phase 3 — Security group ✅ (needs update)
+Cost: ~$1.40/month
 
-EC2 → Security Groups → `qwopus-sg`. Update inbound rules:
-- **SSH (22)** — `Source = My IP`
-- **HTTP (80)** — `Source = 0.0.0.0/0` (certbot Let's Encrypt challenge — needed for cert generation and renewal)
-- **Custom TCP 8000** — `Source = 0.0.0.0/0` (vLLM HTTPS + API key)
-- **Custom TCP 8889** — `Source = 0.0.0.0/0` (SearXNG proxy HTTPS + API key)
+### Phase 3 — Create pod template
 
-### Phase 4 — Elastic IP ✅
-
-Allocated. Save the IPv4 address for `.env`.
-
-### Phase 5 — DNS (Namecheap)
-
-Namecheap → Domain → Advanced DNS → Add record:
-- Type: **A Record**
-- Host: `qwopus`
-- Value: `<Elastic IP>`
-- TTL: Automatic
-
-Verify: `nslookup qwopus.peteryamout.com` should resolve to the Elastic IP.
-
-### Phase 6 — IAM role for CloudWatch
-
-IAM → Roles → Create role:
-- Trusted entity: **EC2**
-- Attach policy: `CloudWatchAgentServerPolicy`
-- Name: `qwopus-ec2-role`
-
-### Phase 7 — AMI lookup
-
-EC2 → AMIs → Public images, owner `amazon`. Search: `Deep Learning OSS Nvidia Driver AMI GPU PyTorch Ubuntu 22.04`. Pick newest `eu-west-1` AMI.
-
-### Phase 8 — Launch Spot instance
-
-EC2 → Launch instances:
+RunPod console → Pods → Templates → New Template:
 - Name: `qwopus-27b`
-- AMI: from Phase 7
-- Type: **g6.2xlarge**
-- Key pair: `qwopus-key`
-- Security group: `qwopus-sg`
-- Storage: **100 GiB gp3**
-- IAM instance profile: `qwopus-ec2-role`
-- **Advanced details → Purchasing option → Request Spot Instances**
-  - Request type: **Persistent**
-  - Interruption behavior: **Stop**
+- Image: `vllm/vllm-openai:latest` (or pin a version like `v0.8.3`)
+- GPU: **1x A6000** or **1x A40** (48 GB)
+- Container disk: **10 GB** (OS/packages, not model)
+- Network volume: `qwopus-data` mounted at `/workspace`
+- Expose ports: `8000/http, 8889/http`
+- Docker command: `bash /workspace/QwopusUncensored/server/entrypoint.sh`
+- Environment variables:
+  - `QWOPUS_API_KEY=LdiOHxeTFEK1hv-1eJkg0hscCbj0RuhDbWHzBoO0f5Q`
+  - `RUNPOD_API_KEY=<your-runpod-api-key>`
+  - `RUNPOD_POD_ID=<filled-after-creation>`
+  - `MAX_MODEL_LEN=32768`
+  - `GPU_MEMORY_UTILIZATION=0.90`
 
-### Phase 9 — Associate Elastic IP
+### Phase 4 — First deploy
 
-EC2 → Elastic IPs → Actions → Associate → pick the instance.
-
-### Phase 10 — Verify SSH
-
+1. Launch the pod from the template (Spot or On-Demand)
+2. SSH into the pod (RunPod provides a web terminal or SSH command)
+3. Clone the repo and download the model:
 ```bash
-ssh -i ~/.ssh/qwopus-key.pem ubuntu@<elastic-ip>
-```
-
-### Phase 11 — Populate `.env` on laptop
-
-Fill in all values gathered above, including the generated API key.
-
-### Phase 12 — Deploy code to server
-
-```bash
-ssh -i ~/.ssh/qwopus-key.pem ubuntu@<elastic-ip>
+cd /workspace
 git clone https://github.com/pky00/QwopusUncensored.git
-cd QwopusUncensored
-bash server/setup.sh
+bash QwopusUncensored/server/download-model.sh
+bash QwopusUncensored/server/install-searxng.sh
 ```
-`setup.sh` installs Docker, certbot, vLLM, CloudWatch agent, downloads the model (~15-20 min), launches SearXNG, installs the systemd service, sets the auto-shutdown cron, generates the TLS cert, and reboots.
+4. Note the pod ID from the RunPod console
+5. Update `.env` on your laptop with `RUNPOD_POD_ID` and the proxy URLs
+6. Restart the pod — `entrypoint.sh` launches everything automatically
 
-### Phase 13 — Laptop tooling (WSL)
+### Phase 5 — Laptop tooling (WSL)
 
 ```bash
-# AWS CLI v2
-sudo dnf install -y unzip curl
-curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o awscliv2.zip
-unzip awscliv2.zip && sudo ./aws/install && rm -rf aws awscliv2.zip
-aws configure  # region=eu-west-1
-
-# Node + OpenCode
-sudo dnf install -y nodejs npm
-sudo npm install -g @opencode/cli
+# Install RunPod CLI (optional, API calls work via curl too)
+pip install runpod
 
 # Make client scripts executable
 chmod +x /mnt/c/Projects/QwopusUncensored/client/qwopus{,-stop,-status}
 ```
 
-### Phase 14 — First run
+### Phase 6 — First run
 
 ```bash
 cd /mnt/c/Projects/QwopusUncensored
-./client/qwopus-status     # should show instance running + model loaded
-./client/qwopus            # starts everything and launches opencode
+./client/qwopus-status     # should show pod running + model loaded
+./client/qwopus            # starts pod and launches opencode
 ```
 
 ## Daily use
 
-- `./client/qwopus ~/some/project` — start instance, wait for vLLM, launch OpenCode in that dir
+- `./client/qwopus ~/some/project` — start pod, wait for vLLM, launch OpenCode in that dir
 - `./client/qwopus-status` — quick health check
-- `./client/qwopus-stop` — stop instance (or walk away, auto-shutdown handles it after 30 min)
+- `./client/qwopus-stop` — stop pod (or walk away, auto-shutdown handles it after 30 min)
 
 ## Sharing access
 
 Give someone the URL + API key:
-- Endpoint: `https://qwopus.peteryamout.com:8000/v1`
+- Endpoint: `https://{pod-id}-8000.proxy.runpod.net/v1`
 - API key: the value from `.env`
-- They can use it from any OpenAI-compatible client (OpenCode, Continue, Cursor, etc.)
+- They can use it from any OpenAI-compatible client
 - No VPN, no client install, no IP whitelisting
 
 ## Updates
@@ -271,73 +204,67 @@ Give someone the URL + API key:
 # laptop
 git add <files> && git commit -m "..." && git push
 
-# server
-ssh -i ~/.ssh/qwopus-key.pem ubuntu@<elastic-ip>
-cd QwopusUncensored && git pull
-sudo systemctl restart qwopus.service
+# pod (via SSH or web terminal)
+cd /workspace/QwopusUncensored && git pull
+# restart the pod from RunPod console or API
 ```
 
 ## Teardown
 
-Manual in the console:
-1. Terminate the instance (cancel the Spot request first)
-2. Release the Elastic IP (bills while unattached)
-3. Delete the security group
-4. Delete the key pair (optional)
-5. Remove the DNS A record from Namecheap
+1. Stop the pod
+2. Delete the pod
+3. Delete the network volume (or keep it for ~$1.40/month)
 
 ## Cost estimate
 
 | Component | Monthly |
 |---|---|
-| g6.2xlarge **Spot** (~3 hrs/day, eu-west-1) | ~$15–25 |
-| 100 GB gp3 EBS | ~$8 |
-| Elastic IP while attached to running instance | $0 |
-| Elastic IP while instance stopped | ~$3.65 |
-| CloudWatch (logs + custom metrics) | ~$1–3 |
-| Domain (peteryamout.com, annual) | ~$1/month |
-| **Total** | **~$28–40/month** |
+| A6000 Spot (~3 hrs/day) | ~$22 |
+| Network volume (20 GB) | ~$1.40 |
+| **Total** | **~$23/month** |
 
-Spot pricing is ~60-70% cheaper than on-demand.
+On-demand instead of Spot: ~$30/month. Still cheaper than AWS was.
 
 ## Known issues / decisions
 
-1. ~~Model quantization mismatch~~ **Resolved**. Switched to GPTQ variant, `--quantization gptq_marlin`.
+1. **Context length**: starting at 32k (`--max-model-len 32768`). Can go up to 64k+ on 48 GB VRAM. Changing it is a one-line edit + pod restart.
 
-2. ~~Model architecture not supported by vLLM~~ **Resolved**. Qwen3.5 is an official model family (released Feb 2026) with day-0 vLLM support.
+2. **SearXNG without Docker**: needs pip install + manual config. May have dependency issues on the vLLM base image. Fallback: use a free web search API instead.
 
-3. **AMI ID not yet selected**. Must be looked up manually in Phase 7 for `eu-west-1`.
+3. **Auto-shutdown timing**: RunPod Spot pods can be reclaimed AND auto-shutdown. If the cron script stops the pod, and then Spot reclaims it simultaneously, there's no conflict — both result in a stopped pod.
 
-4. **OpenCode config paths**. `client/opencode-config.json` and `client/mcp-config.json` need to be copied into wherever OpenCode actually reads its config from — not verified.
+4. **Model .bak files**: not copying to network volume. Only the main safetensors + configs. If multimodal is needed later, re-download.
 
-5. **certbot on Spot interruption**. If AWS reclaims the instance and it stops, the cert and renewal cron survive on the EBS volume. On restart, certbot picks up where it left off. No action needed, but worth verifying on first reclaim.
+5. **vLLM base image version**: need to verify which version ships with transformers 5.5+ for Qwen3.5 support. May need a custom Dockerfile.
 
 ## Troubleshooting
 
 | Issue | Fix |
 |---|---|
-| vLLM OOM | Lower `MAX_MODEL_LEN` to 8192 in `server/startup.sh` |
+| vLLM OOM | Lower `MAX_MODEL_LEN` (try 16384) or `GPU_MEMORY_UTILIZATION` |
 | Slow first response | Normal — KV cache warmup |
-| Tool calls failing | Try higher quant or add `--chat-template` |
-| SearXNG no results | Check `formats: - json` in settings.yml, `docker restart searxng` |
-| Can't connect | Check SG rules, verify `qwopus.peteryamout.com` resolves to EIP via `nslookup` |
-| TLS cert expired | SSH in, run `sudo certbot renew --force-renewal` |
-| Rate limited yourself | Wait 1 min, or SSH in and restart the rate limiter |
-| Auto-shutdown too aggressive | Raise `IDLE_LIMIT` in `auto-shutdown.sh` |
-| Model download failed | SSH in, re-run `bash server/download-model.sh` |
-| Spot reclaim mid-session | Instance stops, disk preserved. Run `./client/qwopus` to restart. |
-| CloudWatch not receiving logs | Check IAM role is attached, run `sudo /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a status` |
+| Tool calls failing | Try `--chat-template` flag |
+| SearXNG no results | Check settings.yml has `formats: - json` |
+| Can't connect | Check pod is running in RunPod console, verify proxy URL |
+| API key rejected | Check `Authorization: Bearer <key>` header |
+| Rate limited yourself | Wait 1 min, or SSH in and restart entrypoint |
+| Auto-shutdown too aggressive | Raise `IDLE_LIMIT` in auto-shutdown.sh |
+| Model download failed | SSH in, re-run download-model.sh |
+| Spot reclaim | Pod stops, network volume preserved. Start pod again. |
+| Pod won't start (Spot) | No capacity. Try a different GPU type or switch to On-Demand. |
 
 ## Decisions log
 
 | Date | Decision | Reason |
 |---|---|---|
-| 2026-04-11 | Switched from BF16 to GPTQ 4-bit (`groxaxo/...`) | Original model is 60 GB BF16, won't fit in 24 GB VRAM without on-the-fly quant |
-| 2026-04-11 | Changed `--quantization awq_marlin` → `gptq_marlin` | No AWQ variant exists for this model |
+| 2026-04-11 | Switched from BF16 to GPTQ 4-bit | Original model is 60 GB BF16, won't fit in 24 GB VRAM |
+| 2026-04-11 | Changed `--quantization awq_marlin` → `gptq_marlin` | No AWQ variant exists |
 | 2026-04-13 | Dropped Tailscale | HTTPS + API key solves IP rotation and access sharing more simply |
-| 2026-04-13 | Added HTTPS via Let's Encrypt + vLLM native SSL | Encrypts API key in transit, proper trusted cert via `qwopus.peteryamout.com` |
-| 2026-04-13 | Added rate limiting (50 req/min, 3-strike ban for 1hr) | Prevents brute-force and abuse on public endpoint |
-| 2026-04-13 | Added SearXNG proxy with API key auth | SearXNG has no built-in auth; proxy enforces same API key |
-| 2026-04-13 | Added CloudWatch monitoring | Centralized logging for vLLM, GPU, system metrics, rate limiter |
-| 2026-04-13 | Switched from on-demand to Spot (persistent, Stop) | ~60-70% cost reduction, acceptable interruption risk for personal use |
-| 2026-04-13 | Domain: `qwopus.peteryamout.com` | Already owned on Namecheap |
+| 2026-04-13 | Added HTTPS + API key + rate limiting | Security layer for public endpoint |
+| 2026-04-13 | Switched from on-demand to Spot | ~60-70% cost reduction |
+| 2026-04-13 | Pivoted from AWS to RunPod | A10G (22 GB) OOM with multimodal model. No g6 in eu-west-1. RunPod A6000 (48 GB) is cheaper and fits. |
+| 2026-04-13 | Dropped CloudWatch | Using RunPod built-in logs instead. Simpler, free. |
+| 2026-04-13 | Dropped certbot/Let's Encrypt | RunPod proxy provides automatic HTTPS with stable URLs |
+| 2026-04-13 | SearXNG via pip instead of Docker | No Docker-in-Docker on RunPod pods |
+| 2026-04-13 | Context length 32k | 48 GB VRAM supports 32k-64k comfortably |
+| 2026-04-13 | Ditched .bak model files | Not needed, saves ~17 GB on network volume |

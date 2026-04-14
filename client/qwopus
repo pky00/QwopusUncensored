@@ -10,82 +10,61 @@ NC='\033[0m'
 
 echo -e "${GREEN}Starting Qwopus 27B...${NC}"
 
-STATE=$(aws ec2 describe-instances \
-  --instance-ids $AWS_INSTANCE_ID \
-  --region $AWS_REGION \
-  --query 'Reservations[0].Instances[0].State.Name' \
-  --output text 2>/dev/null)
+STATUS=$(curl -s "https://api.runpod.io/graphql?api_key=$RUNPOD_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d "{\"query\": \"{ pod(input: { podId: \\\"$RUNPOD_POD_ID\\\" }) { desiredStatus runtime { uptimeInSeconds } } }\"}" \
+  2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data']['pod']['desiredStatus'])" 2>/dev/null)
 
-if [ "$STATE" == "running" ]; then
-  echo -e "${GREEN}Instance already running${NC}"
+if [ "$STATUS" == "RUNNING" ]; then
+  echo -e "${GREEN}Pod already running${NC}"
 
-elif [ "$STATE" == "stopped" ]; then
-  echo -e "${YELLOW}Instance stopped. Starting...${NC}"
-  aws ec2 start-instances \
-    --instance-ids $AWS_INSTANCE_ID \
-    --region $AWS_REGION > /dev/null 2>&1
+elif [ "$STATUS" == "EXITED" ]; then
+  echo -e "${YELLOW}Pod stopped. Starting...${NC}"
+  curl -s -X POST "https://api.runpod.io/graphql?api_key=$RUNPOD_API_KEY" \
+    -H "Content-Type: application/json" \
+    -d "{\"query\": \"mutation { podResume(input: { podId: \\\"$RUNPOD_POD_ID\\\", gpuCount: 1 }) { id desiredStatus } }\"}" \
+    > /dev/null 2>&1
 
-  echo -n "  Waiting for instance"
-  while true; do
-    STATE=$(aws ec2 describe-instances \
-      --instance-ids $AWS_INSTANCE_ID \
-      --region $AWS_REGION \
-      --query 'Reservations[0].Instances[0].State.Name' \
-      --output text 2>/dev/null)
-    if [ "$STATE" == "running" ]; then
+  echo -n "  Waiting for pod"
+  for i in $(seq 1 60); do
+    STATUS=$(curl -s "https://api.runpod.io/graphql?api_key=$RUNPOD_API_KEY" \
+      -H "Content-Type: application/json" \
+      -d "{\"query\": \"{ pod(input: { podId: \\\"$RUNPOD_POD_ID\\\" }) { desiredStatus } }\"}" \
+      2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data']['pod']['desiredStatus'])" 2>/dev/null)
+    if [ "$STATUS" == "RUNNING" ]; then
       echo ""
-      echo -e "${GREEN}  Instance running${NC}"
+      echo -e "${GREEN}  Pod running${NC}"
       break
     fi
     echo -n "."
     sleep 3
   done
-
-  echo -n "  Waiting for SSH"
-  for i in $(seq 1 40); do
-    if ssh -i $AWS_SSH_KEY -o ConnectTimeout=3 -o StrictHostKeyChecking=no \
-      ubuntu@$AWS_ELASTIC_IP "echo ok" > /dev/null 2>&1; then
-      echo ""
-      echo -e "${GREEN}  SSH ready${NC}"
-      break
-    fi
-    echo -n "."
-    sleep 3
-  done
-
-elif [ "$STATE" == "pending" ] || [ "$STATE" == "stopping" ]; then
-  echo -e "${YELLOW}Instance is ${STATE}. Waiting...${NC}"
-  aws ec2 wait instance-running \
-    --instance-ids $AWS_INSTANCE_ID \
-    --region $AWS_REGION
-  echo -e "${GREEN}Instance running${NC}"
-
 else
-  echo -e "${RED}Unexpected state: $STATE${NC}"
+  echo -e "${RED}Unexpected pod status: $STATUS${NC}"
   exit 1
 fi
 
 echo -n "  Waiting for model to load"
-for i in $(seq 1 60); do
-  HEALTH=$(curl -sk -o /dev/null -w "%{http_code}" \
-    https://$QWOPUS_DOMAIN:$VLLM_PORT/health 2>/dev/null)
+for i in $(seq 1 120); do
+  HEALTH=$(curl -s -o /dev/null -w "%{http_code}" \
+    "$VLLM_URL/health" 2>/dev/null)
   if [ "$HEALTH" == "200" ]; then
     echo ""
     echo -e "${GREEN}  Model loaded${NC}"
     break
   fi
-  if [ $i -eq 60 ]; then
+  if [ $i -eq 120 ]; then
     echo ""
-    echo -e "${RED}  Model timeout. Check: ssh -i $AWS_SSH_KEY ubuntu@$AWS_ELASTIC_IP${NC}"
+    echo -e "${RED}  Model timeout. Check RunPod console logs.${NC}"
     exit 1
   fi
   echo -n "."
-  sleep 3
+  sleep 5
 done
 
-SEARX=$(curl -sk -o /dev/null -w "%{http_code}" \
+SEARX=$(curl -s -o /dev/null -w "%{http_code}" \
   -H "Authorization: Bearer $QWOPUS_API_KEY" \
-  https://$QWOPUS_DOMAIN:$SEARXNG_PROXY_PORT/health 2>/dev/null)
+  "$SEARXNG_URL/health" 2>/dev/null)
 if [ "$SEARX" == "200" ]; then
   echo -e "${GREEN}  SearXNG ready${NC}"
 else

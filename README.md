@@ -1,59 +1,65 @@
 # QwopusUncensored
 
-Self-hosted uncensored 27B coding agent on AWS. See [plan.md](plan.md) for full architecture and deployment guide.
+Self-hosted uncensored 27B coding agent on RunPod. See [plan.md](plan.md) for full architecture and deployment guide.
 
-## SSH Access
-
-SSH is only needed for initial server setup and occasional maintenance. The security group restricts port 22 to your current IP address, which means you need to update it whenever your home IP changes.
-
-### Check your current IP
+## Quick start
 
 ```bash
-curl -s https://checkip.amazonaws.com
+# Copy and fill in your values
+cp .env.example .env
+
+# Start the pod + launch OpenCode
+./client/qwopus
+
+# Check status
+./client/qwopus-status
+
+# Stop the pod
+./client/qwopus-stop
 ```
 
-### Update the SSH rule
+## First-time setup
 
-1. Remove the old rule (replace `OLD_IP` with the IP currently in the SG):
-
+1. Create a RunPod account, add funds, generate an API key
+2. Create a 20 GB network volume
+3. Create a pod with A6000/A40 GPU, mount the volume, set env vars
+4. SSH into the pod and run:
 ```bash
-aws ec2 revoke-security-group-ingress --region eu-west-1 \
-  --group-id sg-0b7ae8f721b3e494d \
-  --protocol tcp --port 22 --cidr OLD_IP/32
+cd /workspace
+git clone https://github.com/pky00/QwopusUncensored.git
+bash QwopusUncensored/server/download-model.sh
+bash QwopusUncensored/server/install-searxng.sh
 ```
+5. Note the pod ID, update `.env` and client configs with the proxy URLs
+6. Restart the pod — entrypoint.sh launches everything
 
-2. Add your new IP:
+See [plan.md](plan.md) for detailed steps.
 
+## RunPod pod management
+
+### Start pod via API
 ```bash
-aws ec2 authorize-security-group-ingress --region eu-west-1 \
-  --group-id sg-0b7ae8f721b3e494d \
-  --protocol tcp --port 22 --cidr $(curl -s https://checkip.amazonaws.com)/32
+curl -s -X POST "https://api.runpod.io/graphql?api_key=$RUNPOD_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "mutation { podResume(input: { podId: \"'$RUNPOD_POD_ID'\", gpuCount: 1 }) { id } }"}'
 ```
 
-### One-liner (revoke old + add new)
-
+### Stop pod via API
 ```bash
-# Find the current allowed IP
-aws ec2 describe-security-groups --region eu-west-1 \
-  --group-ids sg-0b7ae8f721b3e494d \
-  --query "SecurityGroups[0].IpPermissions[?FromPort==\`22\`].IpRanges[0].CidrIp" \
-  --output text
-
-# Then revoke it and add your current IP
-OLD_IP=$(aws ec2 describe-security-groups --region eu-west-1 \
-  --group-ids sg-0b7ae8f721b3e494d \
-  --query "SecurityGroups[0].IpPermissions[?FromPort==\`22\`].IpRanges[0].CidrIp" \
-  --output text) && \
-aws ec2 revoke-security-group-ingress --region eu-west-1 \
-  --group-id sg-0b7ae8f721b3e494d \
-  --protocol tcp --port 22 --cidr $OLD_IP && \
-aws ec2 authorize-security-group-ingress --region eu-west-1 \
-  --group-id sg-0b7ae8f721b3e494d \
-  --protocol tcp --port 22 --cidr $(curl -s https://checkip.amazonaws.com)/32
+curl -s -X POST "https://api.runpod.io/graphql?api_key=$RUNPOD_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "mutation { podStop(input: { podId: \"'$RUNPOD_POD_ID'\" }) { id } }"}'
 ```
 
-### Connect
-
+### Check pod status
 ```bash
-ssh -i ~/.ssh/qwopus-key.pem ubuntu@34.251.74.30
+curl -s "https://api.runpod.io/graphql?api_key=$RUNPOD_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "{ pod(input: { podId: \"'$RUNPOD_POD_ID'\" }) { desiredStatus } }"}'
 ```
+
+## Endpoints
+
+- **vLLM**: `https://{pod-id}-8000.proxy.runpod.net/v1`
+- **SearXNG**: `https://{pod-id}-8889.proxy.runpod.net`
+- Both require `Authorization: Bearer <QWOPUS_API_KEY>` header

@@ -8,39 +8,41 @@ YELLOW='\033[1;33m'
 RED='\033[0;31m'
 NC='\033[0m'
 
-STATE=$(aws ec2 describe-instances \
-  --instance-ids $AWS_INSTANCE_ID \
-  --region $AWS_REGION \
-  --query 'Reservations[0].Instances[0].State.Name' \
-  --output text 2>/dev/null)
+STATUS=$(curl -s "https://api.runpod.io/graphql?api_key=$RUNPOD_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d "{\"query\": \"{ pod(input: { podId: \\\"$RUNPOD_POD_ID\\\" }) { desiredStatus } }\"}" \
+  2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data']['pod']['desiredStatus'])" 2>/dev/null)
 
-if [ "$STATE" == "stopped" ]; then
+if [ "$STATUS" == "EXITED" ]; then
   echo -e "${YELLOW}Already stopped.${NC}"
   exit 0
 fi
 
-if [ "$STATE" != "running" ]; then
-  echo -e "${RED}Instance state: $STATE${NC}"
+if [ "$STATUS" != "RUNNING" ]; then
+  echo -e "${RED}Pod status: $STATUS${NC}"
   exit 1
 fi
 
 echo -e "${YELLOW}Stopping Qwopus...${NC}"
-aws ec2 stop-instances \
-  --instance-ids $AWS_INSTANCE_ID \
-  --region $AWS_REGION > /dev/null 2>&1
+curl -s -X POST "https://api.runpod.io/graphql?api_key=$RUNPOD_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d "{\"query\": \"mutation { podStop(input: { podId: \\\"$RUNPOD_POD_ID\\\" }) { id } }\"}" \
+  > /dev/null 2>&1
 
 echo -n "  Waiting"
-while true; do
-  STATE=$(aws ec2 describe-instances \
-    --instance-ids $AWS_INSTANCE_ID \
-    --region $AWS_REGION \
-    --query 'Reservations[0].Instances[0].State.Name' \
-    --output text 2>/dev/null)
-  if [ "$STATE" == "stopped" ]; then
+for i in $(seq 1 30); do
+  STATUS=$(curl -s "https://api.runpod.io/graphql?api_key=$RUNPOD_API_KEY" \
+    -H "Content-Type: application/json" \
+    -d "{\"query\": \"{ pod(input: { podId: \\\"$RUNPOD_POD_ID\\\" }) { desiredStatus } }\"}" \
+    2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data']['pod']['desiredStatus'])" 2>/dev/null)
+  if [ "$STATUS" == "EXITED" ]; then
     echo ""
     echo -e "${GREEN}Stopped. Billing paused.${NC}"
-    break
+    exit 0
   fi
   echo -n "."
   sleep 3
 done
+
+echo ""
+echo -e "${YELLOW}Stop requested. Check RunPod console.${NC}"

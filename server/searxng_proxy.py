@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""HTTPS + API key proxy in front of SearXNG.
+"""API key proxy in front of SearXNG.
 SearXNG has no built-in auth, so this proxy validates the same
 API key used by vLLM and forwards requests to localhost:8888.
+RunPod's proxy handles HTTPS termination.
 """
 import os
-import ssl
 import httpx
 import uvicorn
 from fastapi import FastAPI, Request
@@ -13,9 +13,6 @@ from fastapi.responses import JSONResponse
 API_KEY = os.environ["QWOPUS_API_KEY"]
 SEARXNG_URL = os.environ.get("SEARXNG_URL", "http://127.0.0.1:8888")
 PROXY_PORT = int(os.environ.get("SEARXNG_PROXY_PORT", "8889"))
-SSL_CERT = os.environ.get("SSL_CERTFILE", "/etc/letsencrypt/live/{}/fullchain.pem")
-SSL_KEY = os.environ.get("SSL_KEYFILE", "/etc/letsencrypt/live/{}/privkey.pem")
-DOMAIN = os.environ.get("QWOPUS_DOMAIN", "qwopus.peteryamout.com")
 
 app = FastAPI()
 client = httpx.AsyncClient(base_url=SEARXNG_URL, timeout=30.0)
@@ -63,13 +60,4 @@ async def health():
 
 
 if __name__ == "__main__":
-    cert_path = SSL_CERT.format(DOMAIN)
-    key_path = SSL_KEY.format(DOMAIN)
-
-    uvicorn.run(
-        app,
-        host="0.0.0.0",
-        port=PROXY_PORT,
-        ssl_keyfile=key_path,
-        ssl_certfile=cert_path,
-    )
+    uvicorn.run(app, host="0.0.0.0", port=PROXY_PORT)

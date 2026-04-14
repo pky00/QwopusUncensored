@@ -11,31 +11,44 @@ NC='\033[0m'
 echo "Qwopus 27B Status"
 echo "================================"
 
-STATE=$(aws ec2 describe-instances \
-  --instance-ids $AWS_INSTANCE_ID \
-  --region $AWS_REGION \
-  --query 'Reservations[0].Instances[0].State.Name' \
-  --output text 2>/dev/null)
+STATUS=$(curl -s "https://api.runpod.io/graphql?api_key=$RUNPOD_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d "{\"query\": \"{ pod(input: { podId: \\\"$RUNPOD_POD_ID\\\" }) { desiredStatus runtime { uptimeInSeconds gpus { gpuUtilPerc memoryUtilPerc } } } }\"}" \
+  2>/dev/null | python3 -c "
+import sys, json
+d = json.load(sys.stdin)['data']['pod']
+print(d['desiredStatus'])
+if d.get('runtime') and d['runtime'].get('gpus'):
+    g = d['runtime']['gpus'][0]
+    print(f\"GPU: {g.get('gpuUtilPerc', '?')}% util, {g.get('memoryUtilPerc', '?')}% VRAM\")
+    uptime = d['runtime'].get('uptimeInSeconds', 0)
+    print(f\"Uptime: {uptime // 3600}h {(uptime % 3600) // 60}m\")
+" 2>/dev/null)
 
-if [ "$STATE" == "running" ]; then
-  echo -e "Instance:  ${GREEN}running${NC}"
+POD_STATUS=$(echo "$STATUS" | head -1)
+
+if [ "$POD_STATUS" == "RUNNING" ]; then
+  echo -e "Pod:       ${GREEN}running${NC}"
+  echo "$STATUS" | tail -n +2 | while read line; do
+    echo -e "           ${GREEN}$line${NC}"
+  done
 else
-  echo -e "Instance:  ${RED}$STATE${NC}"
+  echo -e "Pod:       ${RED}$POD_STATUS${NC}"
   echo "================================"
   exit 0
 fi
 
-HEALTH=$(curl -sk -o /dev/null -w "%{http_code}" --connect-timeout 3 \
-  https://$QWOPUS_DOMAIN:$VLLM_PORT/health 2>/dev/null)
+HEALTH=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 5 \
+  "$VLLM_URL/health" 2>/dev/null)
 if [ "$HEALTH" == "200" ]; then
   echo -e "Model:     ${GREEN}loaded${NC}"
 else
   echo -e "Model:     ${RED}not responding${NC}"
 fi
 
-SEARX=$(curl -sk -o /dev/null -w "%{http_code}" --connect-timeout 3 \
+SEARX=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 5 \
   -H "Authorization: Bearer $QWOPUS_API_KEY" \
-  https://$QWOPUS_DOMAIN:$SEARXNG_PROXY_PORT/health 2>/dev/null)
+  "$SEARXNG_URL/health" 2>/dev/null)
 if [ "$SEARX" == "200" ]; then
   echo -e "SearXNG:   ${GREEN}ready${NC}"
 else
