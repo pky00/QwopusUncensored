@@ -1,3 +1,10 @@
 .env
 *.pem
 test.sh
+auth.json
+opencode-config.json
+mcp-config.json
+opencode.jsonc
+client/venv/
+__pycache__/
+*.pyc

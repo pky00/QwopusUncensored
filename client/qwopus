@@ -9,9 +9,15 @@ RED='\033[0;31m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
-TEMPLATE_ID="${RUNPOD_TEMPLATE_ID:-xejddhhm4u}"
-VOLUME_ID="${RUNPOD_VOLUME_ID:-zh2qr905e2}"
+TEMPLATE_ID="$RUNPOD_TEMPLATE_ID"
+VOLUME_ID="$RUNPOD_VOLUME_ID"
 MIN_VRAM=40
+
+if [ -z "$RUNPOD_API_KEY" ] || [ -z "$TEMPLATE_ID" ] || [ -z "$VOLUME_ID" ] || [ -z "$QWOPUS_API_KEY" ]; then
+  echo -e "${RED}Missing required .env variables. Copy .env.example to .env and fill in:${NC}"
+  echo "  RUNPOD_API_KEY, RUNPOD_TEMPLATE_ID, RUNPOD_VOLUME_ID, QWOPUS_API_KEY"
+  exit 1
+fi
 
 echo -e "${GREEN}Qwopus 27B${NC}"
 echo ""
@@ -168,31 +174,18 @@ echo -e "${GREEN}  SearXNG: $SEARXNG_URL${NC}"
 echo -e "${GREEN}========================================${NC}"
 echo ""
 
-# Update client configs with current pod URLs
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-cat > "$SCRIPT_DIR/opencode-config.json" <<EOF
-{
-  "provider": "openai-compatible",
-  "model": "/workspace/models/qwopus-27b",
-  "api_base": "$VLLM_URL",
-  "api_key": "$QWOPUS_API_KEY",
-  "context_window": 32768,
-  "max_output_tokens": 8192
-}
-EOF
-
-cat > "$SCRIPT_DIR/mcp-config.json" <<EOF
-{
-  "mcpServers": {
-    "searxng": {
-      "command": "mcp-searxng",
-      "env": {
-        "SEARXNG_URL": "$SEARXNG_URL",
-        "SEARXNG_API_KEY": "$QWOPUS_API_KEY"
-      }
-    }
-  }
-}
-EOF
-
-echo -e "${GREEN}Client configs updated with current pod URLs.${NC}"
+REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+if [ -d "/mnt/c" ]; then
+  WIN_PATH=$(echo "$REPO_DIR" | sed 's|/mnt/c|C:|' | sed 's|/|\\|g')
+  echo ""
+  echo -e "${GREEN}To launch the chat client, run in Windows cmd:${NC}"
+  echo ""
+  echo "  ${WIN_PATH}\\client\\venv\\Scripts\\python ${WIN_PATH}\\client\\chat.py"
+  echo ""
+else
+  echo ""
+  echo -e "${GREEN}To launch the chat client:${NC}"
+  echo ""
+  echo "  $REPO_DIR/client/venv/bin/python $REPO_DIR/client/chat.py"
+  echo ""
+fi

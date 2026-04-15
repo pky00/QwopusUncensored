@@ -1,8 +1,0 @@
-{
-  "provider": "openai-compatible",
-  "model": "groxaxo/Huihui-Qwen3.5-27B-Claude-4.6-Opus-abliterated-gptq-w4g128",
-  "api_base": "UPDATE_WITH_POD_URL",
-  "api_key": "UPDATE_WITH_API_KEY",
-  "context_window": 32768,
-  "max_output_tokens": 8192
-}
