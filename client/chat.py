@@ -513,6 +513,7 @@ class ChatWindow(QMainWindow):
 
 
 def load_env():
+    env_vars = {}
     env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".env")
     env_path = os.path.normpath(env_path)
     if os.path.exists(env_path):
@@ -522,27 +523,34 @@ def load_env():
                 if not line or line.startswith("#") or "=" not in line:
                     continue
                 key, val = line.split("=", 1)
-                os.environ.setdefault(key.strip(), val.strip())
+                env_vars[key.strip()] = val.strip()
+    return env_vars
 
 
 def main():
-    load_env()
+    env = load_env()
 
-    pod_id = os.environ.get("RUNPOD_POD_ID", "")
-    api_key = os.environ.get("QWOPUS_API_KEY", "")
-    api_url = os.environ.get("QWOPUS_API_URL", "")
-    searxng_url = os.environ.get("QWOPUS_SEARXNG_URL", "")
+    pod_id = env.get("RUNPOD_POD_ID", "")
+    api_key = env.get("QWOPUS_API_KEY", "")
 
-    if pod_id and not api_url:
+    if pod_id:
         api_url = f"https://{pod_id}-8000.proxy.runpod.net/v1"
-    if pod_id and not searxng_url:
         searxng_url = f"https://{pod_id}-8080.proxy.runpod.net"
+    else:
+        api_url = ""
+        searxng_url = ""
 
     if not api_url or not api_key:
         print("ERROR: Could not find API URL or key.")
         print("Make sure .env has RUNPOD_POD_ID and QWOPUS_API_KEY set.")
         print("Run ./client/qwopus to start a pod first.")
         sys.exit(1)
+
+    print(f"Pod ID:     {pod_id}")
+    print(f"vLLM API:   {api_url}")
+    print(f"SearXNG:    {searxng_url or 'not configured'}")
+    print(f"API Key:    {api_key[:8]}...")
+    print("Starting chat...")
 
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
